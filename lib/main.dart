@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -19,31 +20,100 @@ class MyApp extends StatelessWidget {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Task Manager',
-      home: TaskListScreen(),
+      home: AuthScreen(),
     );
   }
 }
 
-class Task {
-  final String id;
-  final String name;
-  bool completed;
+class AuthScreen extends StatelessWidget {
+  const AuthScreen({Key? key}) : super(key: key);
 
-  Task({required this.id, required this.name, this.completed = false});
-
-  factory Task.fromDocument(DocumentSnapshot doc) {
-    return Task(
-      id: doc.id,
-      name: doc['name'],
-      completed: doc['completed'],
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasData) {
+          return const TaskListScreen();
+        }
+        return const LoginPage();
+      },
     );
   }
+}
 
-  Map<String, dynamic> toMap() {
-    return {
-      'name': name,
-      'completed': completed,
-    };
+class LoginPage extends StatefulWidget {
+  const LoginPage({Key? key}) : super(key: key);
+
+  @override
+  _LoginPageState createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+
+  Future<void> _login() async {
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed login. Please try again.')),
+      );
+    }
+  }
+
+  Future<void> _signUp() async {
+    try {
+      await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed signup. Please try again.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Login')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            TextField(
+              controller: _emailController,
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
+            TextField(
+              controller: _passwordController,
+              decoration: const InputDecoration(labelText: 'Password'),
+              obscureText: true,
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _login,
+              child: const Text('Login'),
+            ),
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: _signUp,
+              child: const Text('Create new account'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -51,18 +121,13 @@ class TaskListScreen extends StatefulWidget {
   const TaskListScreen({Key? key}) : super(key: key);
 
   @override
-  State<TaskListScreen> createState() => _TaskListScreenState();
+  _TaskListScreenState createState() => _TaskListScreenState();
 }
 
 class _TaskListScreenState extends State<TaskListScreen> {
   final TextEditingController _taskController = TextEditingController();
   final CollectionReference _tasks =
       FirebaseFirestore.instance.collection('tasks');
-
-  final Map<String, List<String>> dailyTasks = {
-    "Monday": ["9 am - 10 am: HW1, Essay2", "12 pm - 2 pm: Project1, Study"],
-    "Tuesday": ["10 am - 11 am: Assignment1, Reading"],
-  };
 
   Future<void> _addTask() async {
     if (_taskController.text.isNotEmpty) {
@@ -84,33 +149,40 @@ class _TaskListScreenState extends State<TaskListScreen> {
     await _tasks.doc(taskId).delete();
   }
 
+  Future<void> _logout() async {
+    await FirebaseAuth.instance.signOut();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Task Manager'),
+        actions: [
+          TextButton(
+            onPressed: _logout,
+            child: const Text(
+              'Logout',
+              style: TextStyle(color: Colors.black),
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _taskController,
-                    decoration: const InputDecoration(
-                      labelText: 'Enter Task',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  onPressed: _addTask,
-                  icon: const Icon(Icons.add),
-                ),
-              ],
+            child: TextField(
+              controller: _taskController,
+              decoration: const InputDecoration(
+                labelText: 'Enter Task',
+                border: OutlineInputBorder(),
+              ),
             ),
+          ),
+          ElevatedButton(
+            onPressed: _addTask,
+            child: const Text('Add Task'),
           ),
           Expanded(
             child: StreamBuilder(
@@ -153,21 +225,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   },
                 );
               },
-            ),
-          ),
-          const Divider(),
-          Expanded(
-            child: ListView(
-              children: dailyTasks.keys.map((day) {
-                return ExpansionTile(
-                  title: Text(day),
-                  children: dailyTasks[day]!.map((taskDetail) {
-                    return ListTile(
-                      title: Text(taskDetail),
-                    );
-                  }).toList(),
-                );
-              }).toList(),
             ),
           ),
         ],
