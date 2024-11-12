@@ -125,27 +125,39 @@ class TaskListScreen extends StatefulWidget {
 }
 
 class _TaskListScreenState extends State<TaskListScreen> {
-  final TextEditingController _taskController = TextEditingController();
+  final TextEditingController _dayController = TextEditingController();
+  final TextEditingController _timeSlotController = TextEditingController();
+  final TextEditingController _taskDetailController = TextEditingController();
   final CollectionReference _tasks =
       FirebaseFirestore.instance.collection('tasks');
 
   Future<void> _addTask() async {
-    if (_taskController.text.isNotEmpty) {
+    if (_dayController.text.isNotEmpty &&
+        _timeSlotController.text.isNotEmpty &&
+        _taskDetailController.text.isNotEmpty) {
       await _tasks.add({
-        'name': _taskController.text,
-        'completed': false,
+        'day': _dayController.text,
+        'timeSlot': _timeSlotController.text,
+        'taskDetails': [
+          {'name': _taskDetailController.text, 'completed': false}
+        ],
       });
-      _taskController.clear();
+      _dayController.clear();
+      _timeSlotController.clear();
+      _taskDetailController.clear();
     }
   }
 
-  Future<void> _toggleTaskCompletion(String taskId, bool currentStatus) async {
-    await _tasks.doc(taskId).update({
-      'completed': !currentStatus,
-    });
+  Future<void> _toggleSubTaskCompletion(
+      String taskId, int subTaskIndex, bool currentStatus) async {
+    final task = await _tasks.doc(taskId).get();
+    final taskDetails = List<Map<String, dynamic>>.from(task['taskDetails']);
+    taskDetails[subTaskIndex]['completed'] = !currentStatus;
+
+    await _tasks.doc(taskId).update({'taskDetails': taskDetails});
   }
 
-  Future<void> _deleteTask(String taskId) async {
+  Future<void> _deleteTimeSlotTasks(String taskId) async {
     await _tasks.doc(taskId).delete();
   }
 
@@ -172,17 +184,38 @@ class _TaskListScreenState extends State<TaskListScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _taskController,
-              decoration: const InputDecoration(
-                labelText: 'Enter Task',
-                border: OutlineInputBorder(),
-              ),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _dayController,
+                  decoration: const InputDecoration(
+                    labelText: 'Day (EX: Monday, Tuesday, etc)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _timeSlotController,
+                  decoration: const InputDecoration(
+                    labelText: 'Time (EX: 9 am - 10 am)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _taskDetailController,
+                  decoration: const InputDecoration(
+                    labelText: 'Task',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: _addTask,
+                  child: const Text('Add Task'),
+                ),
+              ],
             ),
-          ),
-          ElevatedButton(
-            onPressed: _addTask,
-            child: const Text('Add Task'),
           ),
           Expanded(
             child: StreamBuilder(
@@ -196,33 +229,59 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   return const Center(child: Text('No tasks available'));
                 }
 
-                return ListView.builder(
-                  itemCount: snapshot.data!.docs.length,
-                  itemBuilder: (context, index) {
-                    final task = snapshot.data!.docs[index];
-                    final taskId = task.id;
-                    final taskName = task['name'];
-                    final taskCompleted = task['completed'];
+                final groupedTasks = snapshot.data!.docs.groupBy((doc) {
+                  final day = doc['day'];
+                  if (day == null) {
+                    return 'Unknown';
+                  }
+                  return day;
+                });
 
-                    return Card(
-                      margin: const EdgeInsets.all(8.0),
-                      child: ListTile(
-                        title: Text(taskName),
-                        leading: Checkbox(
-                          value: taskCompleted,
-                          onChanged: (value) {
-                            _toggleTaskCompletion(taskId, taskCompleted);
-                          },
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete),
-                          onPressed: () {
-                            _deleteTask(taskId);
-                          },
-                        ),
-                      ),
+                return ListView(
+                  children: groupedTasks.entries.map((entry) {
+                    final day = entry.key;
+                    final tasksForDay = entry.value;
+
+                    return ExpansionTile(
+                      title: Text(day),
+                      children: tasksForDay.map<Widget>((task) {
+                        final taskId = task.id;
+                        final timeSlot = task['timeSlot'];
+                        final taskDetails = List<Map<String, dynamic>>.from(
+                            task['taskDetails']);
+
+                        return ExpansionTile(
+                          title: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(timeSlot),
+                              IconButton(
+                                icon: const Icon(Icons.delete),
+                                onPressed: () {
+                                  _deleteTimeSlotTasks(taskId);
+                                },
+                              ),
+                            ],
+                          ),
+                          children: taskDetails.asMap().entries.map((entry) {
+                            final subTaskIndex = entry.key;
+                            final subTask = entry.value;
+
+                            return ListTile(
+                              title: Text(subTask['name']),
+                              leading: Checkbox(
+                                value: subTask['completed'],
+                                onChanged: (value) {
+                                  _toggleSubTaskCompletion(taskId, subTaskIndex,
+                                      subTask['completed']);
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        );
+                      }).toList(),
                     );
-                  },
+                  }).toList(),
                 );
               },
             ),
@@ -230,5 +289,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
         ],
       ),
     );
+  }
+}
+
+extension GroupByExtension<E> on Iterable<E> {
+  Map<K, List<E>> groupBy<K>(K Function(E) keySelector) {
+    final map = <K, List<E>>{};
+    for (var element in this) {
+      final key = keySelector(element);
+      if (map.containsKey(key)) {
+        map[key]!.add(element);
+      } else {
+        map[key] = [element];
+      }
+    }
+    return map;
   }
 }
